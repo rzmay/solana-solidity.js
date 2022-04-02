@@ -59,6 +59,9 @@ export interface ContractFunctionResult extends ContractCallResult {
 /** Function that maps to a function declared in the contract ABI */
 export type ContractFunction = (...args: any[]) => Promise<ContractFunctionResult | any>;
 
+/** Function that maps to an unsigned transaction of a function declared in the contract ABI */
+export type ContractTransaction = (...args: any[]) => Transaction;
+
 /** Callback function that will be called with decoded events */
 export type EventListener = (event: LogDescription) => void;
 
@@ -82,6 +85,8 @@ export class Contract {
     readonly interface: Interface;
     /** Callable functions mapped to the interface */
     readonly functions: Record<string, ContractFunction>;
+    /** Callable functions to generate transactions mapped to the interface */
+    readonly transactions: Record<string, ContractTransaction>;
     /** Payer for transactions and storage (optional) */
     payer: Signer | null;
 
@@ -105,6 +110,7 @@ export class Contract {
         this.abi = abi;
         this.interface = new Interface(abi);
         this.functions = {};
+        this.transactions = {};
         this.payer = payer;
         this.logs = new LogsParser(this);
 
@@ -127,6 +133,9 @@ export class Contract {
             if (!this.functions[signature]) {
                 defineReadOnly(this.functions, signature, this.buildCall(fragment, false));
             }
+            if (!this.transactions[signature]) {
+                defineReadOnly(this.transactions, signature, this.buildTransaction(fragment));
+            }
             if (typeof this[signature] === 'undefined') {
                 defineReadOnly<any, any>(this, signature, this.buildCall(fragment, true));
             }
@@ -140,6 +149,9 @@ export class Contract {
             const name = uniqueName.slice(1);
             if (!this.functions[name]) {
                 defineReadOnly(this.functions, name, this.functions[signature]);
+            }
+            if (!this.transactions[name]) {
+                defineReadOnly(this.transactions, name, this.transactions[signature]);
             }
             if (typeof this[name] === 'undefined') {
                 defineReadOnly(this, name, this[signature]);
@@ -392,12 +404,23 @@ export class Contract {
     }
 
     /** @internal */
-    protected async call<T extends boolean>(
+    protected buildTransaction(fragment: FunctionFragment): ContractTransaction {
+        return (...args: any[]) => {
+            const options = args[args.length - 1];
+            if (args.length > fragment.inputs.length && typeof options === 'object') {
+                return this.generateTransaction(fragment, args.slice(0, fragment.inputs.length), options);
+            } else {
+                return this.generateTransaction(fragment, args);
+            }
+        };
+    }
+
+    /** @internal */
+    protected generateTransaction<T extends boolean>(
         fragment: FunctionFragment,
-        returnResult: T,
         args: readonly any[],
         options?: ContractCallOptions
-    ): Promise<T extends true ? any : ContractFunctionResult> {
+    ): Transaction {
         const payer = options?.payer || this.payer;
         if (!payer) throw new MissingPayerAccountError();
 
@@ -405,16 +428,9 @@ export class Contract {
             accounts = [],
             writableAccounts = [],
             programDerivedAddresses = [],
-            signers = [],
             sender = payer.publicKey,
             value = 0,
-            simulate = false,
             ed25519sigs = [],
-            confirmOptions = {
-                commitment: 'confirmed',
-                skipPreflight: false,
-                preflightCommitment: 'processed',
-            },
         } = options ?? {};
 
         const seeds = programDerivedAddresses.map(({ seed }) => seed);
@@ -490,6 +506,31 @@ export class Contract {
                 data,
             })
         );
+
+        return transaction;
+    }
+
+    /** @internal */
+    protected async call<T extends boolean>(
+        fragment: FunctionFragment,
+        returnResult: T,
+        args: readonly any[],
+        options?: ContractCallOptions
+    ): Promise<T extends true ? any : ContractFunctionResult> {
+        const payer = options?.payer || this.payer;
+        if (!payer) throw new MissingPayerAccountError();
+
+        const {
+            signers = [],
+            simulate = false,
+            confirmOptions = {
+                commitment: 'confirmed',
+                skipPreflight: false,
+                preflightCommitment: 'processed',
+            },
+        } = options ?? {};
+
+        const transaction = this.generateTransaction<T>(fragment, args, options);
 
         // If the function is read-only, simulate the transaction to get the result
         const { logs, encoded, computeUnitsUsed } =

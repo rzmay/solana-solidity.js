@@ -472,6 +472,11 @@ export class Contract {
                 isSigner: false,
                 isWritable: false,
             },
+            {
+                pubkey: sender,
+                isSigner: true,
+                isWritable: false,
+            },
             ...accounts.map((pubkey) => ({
                 pubkey,
                 isSigner: false,

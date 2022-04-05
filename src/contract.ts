@@ -416,7 +416,7 @@ export class Contract {
     }
 
     /** @internal */
-    protected generateTransaction<T extends boolean>(
+    protected generateTransaction(
         fragment: FunctionFragment,
         args: readonly any[],
         options?: ContractCallOptions
@@ -530,7 +530,7 @@ export class Contract {
             },
         } = options ?? {};
 
-        const transaction = this.generateTransaction<T>(fragment, args, options);
+        const transaction = this.generateTransaction(fragment, args, options);
 
         // If the function is read-only, simulate the transaction to get the result
         const { logs, encoded, computeUnitsUsed } =
